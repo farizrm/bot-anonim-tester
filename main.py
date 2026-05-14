@@ -1,10 +1,9 @@
 import telebot
-   import os
-   import threading
-   from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-   # Server web kecil ini wajib ada agar sistem Koyeb menganggap bot kita hidup
-   class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
        def do_GET(self):
            self.send_response(200)
            self.send_header('Content-type', 'text/html')
@@ -27,8 +26,9 @@ import telebot
            </html>
            """
            self.wfile.write(html.encode('utf-8'))
-
-   def run_server():
+   # Server web kecil ini wajib ada agar sistem Koyeb menganggap bot kita hidup
+   
+ def run_server():  
        # Koyeb akan mengecek port 8000 ini untuk memastikan server tidak mati
        server = HTTPServer(('0.0.0.0', 8000), SimpleHTTPRequestHandler)
        server.serve_forever()
