@@ -21,7 +21,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
         <body style="font-family: sans-serif; text-align: center; padding: 20px;">
-            <h1>🚀 Micifind Bot V5 (Clean UI Edition) Aktif!</h1>
+            <h1>🚀 Micifind Bot V6 (Full Admin Control) Aktif!</h1>
         </body>
         </html>
         """
@@ -376,7 +376,8 @@ def parse_time(time_str):
     if unit == 'H': return datetime.utcnow() + timedelta(hours=val)
     return None
 
-@bot.message_handler(commands=['ban', 'permaban', 'mute', 'unban'])
+# Menambahkan /unmute ke dalam daftar command admin
+@bot.message_handler(commands=['ban', 'permaban', 'mute', 'unban', 'unmute'])
 def admin_commands(message):
     if str(message.chat.id) != str(ADMIN_GROUP_ID): return
     
@@ -410,7 +411,8 @@ def admin_commands(message):
             update_user(uid, {'muted_until': mute_time.isoformat()})
             bot.reply_to(message, f"🔇 User @{args[1]} di-Mute sampai {mute_time.strftime('%Y-%m-%d %H:%M:%S')} UTC.")
             
-    elif cmd == '/unban':
+    # Menggabungkan logika unban dan unmute agar mereset kedua pembatasan
+    elif cmd in ['/unban', '/unmute']:
         update_user(uid, {'banned_until': None, 'muted_until': None})
         bot.reply_to(message, f"🕊️ User @{args[1]} telah dilepas dari status Ban/Mute.")
 
@@ -444,9 +446,7 @@ def open_media(call):
     if media_id in media_vault:
         data = media_vault[media_id]
         try:
-            # Mengirimkan foto/video secara utuh
             bot.copy_message(call.message.chat.id, data['from_chat'], data['msg_id'])
-            # Langsung menghapus pesan berisi tombol agar chat tetap bersih
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception as e:
             bot.answer_callback_query(call.id, "❌ Gagal membuka media.")
@@ -487,11 +487,9 @@ def relay_message(message):
         safe_text = message.text.replace('@', '@\u200B') 
         bot.send_message(user['partner_id'], safe_text)
         
-    # Voice dan Sticker langsung diteruskan secara transparan
     elif message.content_type in ['voice', 'sticker', 'document']:
         bot.copy_message(user['partner_id'], message.chat.id, message.message_id)
 
-    # Sistem Brankas Media Sementara untuk Foto & Video (Clean UI)
     elif message.content_type in ['photo', 'video']:
         partner_lang = get_user(user['partner_id']).get('language', 'en')
         
@@ -509,5 +507,5 @@ def relay_message(message):
         notif = f"<i>📸 Partner mengirim sebuah {media_name}.</i>" if partner_lang == "id" else f"<i>📸 Partner sent a {media_name}.</i>"
         bot.send_message(user['partner_id'], notif, reply_markup=markup, parse_mode="HTML")
 
-print("🚀 Micifind Bot V5 Siap Mengudara!")
+print("🚀 Micifind Bot V6 Siap Mengudara!")
 bot.infinity_polling()
