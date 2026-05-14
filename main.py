@@ -10,7 +10,7 @@ import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from supabase import create_client, Client
 
-# --- SETUP SERVER RENDER ---
+# --- SETUP SERVER RENDER (Mobile Responsive) ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -21,7 +21,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
         <body style="font-family: sans-serif; text-align: center; padding: 20px;">
-            <h1>🚀 Micifind Bot V3 (Enterprise Edition) Aktif!</h1>
+            <h1>🚀 Micifind Bot V5 (Clean UI Edition) Aktif!</h1>
         </body>
         </html>
         """
@@ -39,7 +39,6 @@ TOKEN = os.environ.get("BOT_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# Mengambil ID Grup dan ID Topik dari Environment Render
 ADMIN_GROUP_ID = os.environ.get("ADMIN_GROUP_ID") 
 LOG_THREAD_ID = os.environ.get("LOG_THREAD_ID")
 REPORT_THREAD_ID = os.environ.get("REPORT_THREAD_ID")
@@ -61,6 +60,7 @@ bot.set_my_commands([
 ])
 
 user_registration = {}
+media_vault = {} # Brankas penyimpanan media sementara
 server_stats = {'matches_in_last_minute': 0}
 
 # --- BACKGROUND THREAD: ADMIN ANALYTICS LOG ---
@@ -72,16 +72,14 @@ def admin_logger():
             total_users_res = supabase.table('users').select('user_id', count='exact').execute()
             total_users = total_users_res.count if total_users_res else 0
             
-            # Hitung Match Per Second (Total match dalam 1 menit dibagi 60)
+            # Hitung Match Per Second
             matches_last_min = server_stats['matches_in_last_minute']
             mps = matches_last_min / 60.0
             
             log_msg = f"📊 *LOG ANALITIK (1 Menit Terakhir)*\n\n👥 Total Users DB: {total_users}\n⚡ Match Making: {mps:.2f} match/detik\n🟢 Status VPS: AMAN"
-            
-            # Kirim ke Topik khusus Log jika ada, jika tidak, ke grup utama
             bot.send_message(ADMIN_GROUP_ID, log_msg, message_thread_id=LOG_THREAD_ID, parse_mode="Markdown")
             
-            server_stats['matches_in_last_minute'] = 0 # Reset hitungan
+            server_stats['matches_in_last_minute'] = 0 
         except Exception as e:
             print("Log error:", e)
 
@@ -123,7 +121,6 @@ def send_welcome(message):
     if user and user.get('age'):
         if message.from_user.username:
             update_user(message.chat.id, {'username': message.from_user.username})
-            
         lang = user.get('language', 'en')
         text = "<i>🌟 You are already registered! Use /search to find a partner.</i>" if lang == "en" else "<i>🌟 Kamu sudah terdaftar! Gunakan /search untuk mencari partner.</i>"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
@@ -216,7 +213,6 @@ def attempt_match(chat_id, user_data, scope, value):
         send_match_info(chat_id, partner)
         send_match_info(partner['user_id'], current_me)
         
-        # Tambah statistik
         server_stats['matches_in_last_minute'] += 1
         return True
     return False
@@ -242,6 +238,12 @@ def search_partner(message):
         return
 
     lang = user.get('language', 'en')
+    
+    if user['status'] == 'searching':
+        text_wait = "<i>⏳ You are already searching! Please wait, or type /stop to cancel.</i>" if lang == "en" else "<i>⏳ Kamu sedang dalam antrean pencarian! Mohon tunggu, atau ketik /stop untuk membatalkan.</i>"
+        bot.send_message(message.chat.id, text_wait, parse_mode="HTML")
+        return
+
     if user['status'] == 'chatting' and message.text == '/search':
         text = "<i>💬 You are in a chat! Use /stop to end it. 🔄</i>" if lang == "en" else "<i>💬 Kamu sedang obrolan aktif! Gunakan /stop untuk mengakhiri. 🔄</i>"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
@@ -257,6 +259,8 @@ def search_partner(message):
     
     if attempt_match(message.chat.id, user, 'location', user['location']): return
     time.sleep(3)
+    
+    if get_user(message.chat.id)['status'] != 'searching': return
     if attempt_match(message.chat.id, user, 'location', user['location']): return
     
     text_prov = "<i>📡 Expanding search to your province... ⏳</i>" if lang == "en" else "<i>📡 Belum ada, memperluas pencarian ke provinsimu... ⏳</i>"
@@ -265,6 +269,8 @@ def search_partner(message):
     
     if attempt_match(message.chat.id, user, 'province', user['province']): return
     time.sleep(3)
+    
+    if get_user(message.chat.id)['status'] != 'searching': return
     if attempt_match(message.chat.id, user, 'province', user['province']): return
     
     text_rnd = "<i>🌍 Expanding search globally... ⏳</i>" if lang == "en" else "<i>🌍 Memperluas pencarian secara acak... ⏳</i>"
@@ -273,7 +279,7 @@ def search_partner(message):
     
     if attempt_match(message.chat.id, user, 'all', None): return
     
-    text_wait = "<i>💤 No partners available right now. We will connect you as soon as someone joins!</i>" if lang == "en" else "<i>💤 Belum ada partner yang tersedia. Kamu akan otomatis terhubung begitu ada yang masuk!</i>"
+    text_wait = "<i>💤 No partners available right now. We will connect you as soon as someone joins! (Type /stop to cancel)</i>" if lang == "en" else "<i>💤 Belum ada partner yang tersedia. Kamu akan otomatis terhubung begitu ada yang masuk! (Ketik /stop untuk membatalkan)</i>"
     try: bot.edit_message_text(text_wait, message.chat.id, msg.message_id, parse_mode="HTML")
     except: pass
 
@@ -283,8 +289,13 @@ def stop_command(message):
     user = get_user(message.chat.id)
     if not user: return
     lang = user.get('language', 'en')
+    
     if user['status'] == 'chatting':
         handle_stop(message.chat.id, user, user['partner_id'], is_next=False)
+    elif user['status'] == 'searching':
+        update_user(message.chat.id, {'status': 'idle', 'partner_id': None})
+        text = "<i>🛑 Search cancelled.\nPress /search for a new partner! 🔄</i>" if lang == "en" else "<i>🛑 Pencarian dibatalkan.\nTekan /search untuk mencari partner baru! 🔄</i>"
+        bot.send_message(message.chat.id, text, parse_mode="HTML")
     else:
         text = "<i>🚫 You are not in a chat right now.\nPress /search for a new partner! 🔄</i>" if lang == "en" else "<i>🚫 Kamu sedang tidak dalam obrolan saat ini.\nTekan /search untuk mencari partner baru! 🔄</i>"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
@@ -338,7 +349,6 @@ def submitted_report(call):
         new_count = partner_data.get('report_count', 0) + 1
         update_user(partner_id, {'report_count': new_count})
         
-        # Kirim Alert ke Admin Topik
         if new_count % 50 == 0 and ADMIN_GROUP_ID:
             uname = partner_data.get('username', 'Tidak ada username')
             ban_count = partner_data.get('ban_count', 0)
@@ -351,7 +361,6 @@ def submitted_report(call):
 
 # --- ADMIN COMMAND CENTER & HELPER ---
 
-# Command pembantu agar kamu tahu ID Topik
 @bot.message_handler(commands=['get_topic_id'])
 def helper_get_topic(message):
     if message.message_thread_id:
@@ -427,7 +436,28 @@ def general_commands(message):
         text = "<i>⚙️ Profile reset. Please type /start to create a new profile.</i>" if lang == "en" else "<i>⚙️ Profil direset. Silakan ketik /start untuk membuat profil baru.</i>"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
 
-# --- FILTER SPAM & FORWARD PESAN CHAT DENGAN SPOILER MEDIA ---
+# --- CALLBACK UNTUK MEMBUKA MEDIA (TANPA NOTIFIKASI SISA) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('openmedia_'))
+def open_media(call):
+    media_id = call.data.split('_')[1]
+    
+    if media_id in media_vault:
+        data = media_vault[media_id]
+        try:
+            # Mengirimkan foto/video secara utuh
+            bot.copy_message(call.message.chat.id, data['from_chat'], data['msg_id'])
+            # Langsung menghapus pesan berisi tombol agar chat tetap bersih
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            bot.answer_callback_query(call.id, "❌ Gagal membuka media.")
+    else:
+        bot.answer_callback_query(call.id, "⚠️ Media sudah kedaluwarsa atau ditarik.", show_alert=True)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+
+# --- FILTER SPAM & FORWARD PESAN CHAT ---
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'document', 'sticker'])
 def relay_message(message):
     user = get_user(message.chat.id)
@@ -435,15 +465,13 @@ def relay_message(message):
     lang = user.get('language', 'en')
 
     if user['status'] != 'chatting' or not user['partner_id']:
-        return # Abaikan jika tidak ada partner
+        return 
         
-    # Cek Mute
     now = datetime.utcnow().isoformat()
     if user.get('muted_until') and user['muted_until'] > now:
         bot.send_message(message.chat.id, "<i>🔇 Kamu sedang di-mute oleh sistem admin.</i>", parse_mode="HTML")
         return
 
-    # FILTER SPAM (Link & Mention)
     has_url = False
     entities = message.entities or message.caption_entities or []
     for ent in entities:
@@ -455,28 +483,31 @@ def relay_message(message):
         bot.send_message(message.chat.id, warn, parse_mode="HTML")
         return
 
-    # 1. FORWARD TEXT (Sensor @username jadi unclickable)
     if message.content_type == 'text':
         safe_text = message.text.replace('@', '@\u200B') 
         bot.send_message(user['partner_id'], safe_text)
         
-    # 2. FORWARD LANGSUNG (Voice & Sticker tidak disensor)
+    # Voice dan Sticker langsung diteruskan secara transparan
     elif message.content_type in ['voice', 'sticker', 'document']:
         bot.copy_message(user['partner_id'], message.chat.id, message.message_id)
 
-    # 3. NATIVE SPOILER UNTUK FOTO & VIDEO (Blur Alami Telegram)
+    # Sistem Brankas Media Sementara untuk Foto & Video (Clean UI)
     elif message.content_type in ['photo', 'video']:
         partner_lang = get_user(user['partner_id']).get('language', 'en')
         
-        if message.content_type == 'photo':
-            file_id = message.photo[-1].file_id
-            cap = "<i>[📷 Buka Foto]</i>" if partner_lang == "id" else "<i>[📷 Open Photo]</i>"
-            bot.send_photo(user['partner_id'], file_id, caption=cap, parse_mode="HTML", has_spoiler=True)
+        media_name = "Foto" if message.content_type == 'photo' else "Video"
+        if partner_lang == 'en':
+            media_name = "Photo" if message.content_type == 'photo' else "Video"
             
-        elif message.content_type == 'video':
-            file_id = message.video.file_id
-            cap = "<i>[🎥 Buka Video]</i>" if partner_lang == "id" else "<i>[🎥 Open Video]</i>"
-            bot.send_video(user['partner_id'], file_id, caption=cap, parse_mode="HTML", has_spoiler=True)
+        uid = str(uuid.uuid4())[:8]
+        media_vault[uid] = {'from_chat': message.chat.id, 'msg_id': message.message_id}
+        
+        btn_text = f"📁 Buka {media_name}" if partner_lang == "id" else f"📁 Open {media_name}"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(btn_text, callback_data=f"openmedia_{uid}"))
+        
+        notif = f"<i>📸 Partner mengirim sebuah {media_name}.</i>" if partner_lang == "id" else f"<i>📸 Partner sent a {media_name}.</i>"
+        bot.send_message(user['partner_id'], notif, reply_markup=markup, parse_mode="HTML")
 
-print("🚀 Micifind Bot V3 Siap Mengudara!")
+print("🚀 Micifind Bot V5 Siap Mengudara!")
 bot.infinity_polling()
