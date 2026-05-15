@@ -508,4 +508,4 @@ def relay_message(message):
         bot.send_message(user['partner_id'], notif, reply_markup=markup, parse_mode="HTML")
 
 print("🚀 Micifind Bot V6 Siap Mengudara!")
-bot.infinity_polling()
+bot.infinity_polling(timeout=60, long_polling_timeout=30)
