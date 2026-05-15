@@ -7,6 +7,7 @@ import html
 import uuid
 from datetime import datetime, timedelta
 import re
+import signal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from supabase import create_client, Client
 
@@ -21,7 +22,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
         <body style="font-family: sans-serif; text-align: center; padding: 20px;">
-            <h1>🚀 Micifind Bot V7 (100% Secure Edition) Aktif!</h1>
+            <h1>🚀 Micifind Bot V8 (Production Final) Aktif!</h1>
         </body>
         </html>
         """
@@ -126,7 +127,7 @@ def check_punishment(user):
 # --- ALUR REGISTRASI ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    if is_spamming(message.chat.id): return # CEGAH SPAM DI AWAL!
+    if is_spamming(message.chat.id): return 
     
     user = get_user(message.chat.id)
     is_punished, reason = check_punishment(user)
@@ -243,7 +244,7 @@ def send_match_info(to_id, partner_data):
 
 @bot.message_handler(commands=['search', 'next'])
 def search_partner(message):
-    if is_spamming(message.chat.id): return # CEGAH SPAM DI AWAL!
+    if is_spamming(message.chat.id): return 
     
     user = get_user(message.chat.id)
     if not user:
@@ -304,7 +305,7 @@ def search_partner(message):
 # --- ALUR STOP & REPORT ---
 @bot.message_handler(commands=['stop'])
 def stop_command(message):
-    if is_spamming(message.chat.id): return # CEGAH SPAM DI AWAL!
+    if is_spamming(message.chat.id): return 
     
     user = get_user(message.chat.id)
     if not user: return
@@ -386,7 +387,6 @@ def submitted_report(call):
     text = "<i>✅ Report received. Thank you for keeping the community safe!</i>" if lang == "en" else "<i>✅ Laporan diterima. Terima kasih telah menjaga keamanan komunitas ini!</i>"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
-
 # --- ADMIN COMMAND CENTER & HELPER ---
 @bot.message_handler(commands=['get_topic_id'])
 def helper_get_topic(message):
@@ -403,16 +403,33 @@ def parse_time(time_str):
     if unit == 'H': return datetime.utcnow() + timedelta(hours=val)
     return None
 
-@bot.message_handler(commands=['ban', 'permaban', 'mute', 'unban', 'unmute'])
+@bot.message_handler(commands=['ban', 'permaban', 'mute', 'unban', 'unmute', 'broadcast'])
 def admin_commands(message):
     if str(message.chat.id) != str(ADMIN_GROUP_ID): return
     
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, "Format salah. Contoh: /ban @username 1D")
+        bot.reply_to(message, "Format salah. Contoh: /ban @username 1D atau /broadcast Pesan")
         return
         
     cmd = args[0].lower()
+    
+    # Broadcast tidak butuh username
+    if cmd == '/broadcast':
+        pesan_broadcast = message.text.replace('/broadcast ', '', 1)
+        res = supabase.table('users').select('user_id').execute()
+        if res.data:
+            berhasil = 0
+            for u in res.data:
+                try:
+                    time.sleep(0.05) 
+                    bot.send_message(u['user_id'], f"📢 <b>PENGUMUMAN ADMIN:</b>\n\n{pesan_broadcast}", parse_mode="HTML")
+                    berhasil += 1
+                except:
+                    pass 
+            bot.reply_to(message, f"✅ Broadcast selesai! Berhasil dikirim ke {berhasil} user.")
+        return
+
     target_user = get_user_by_username(args[1])
     if not target_user:
         bot.reply_to(message, "Username tidak ditemukan di database.")
@@ -440,25 +457,11 @@ def admin_commands(message):
     elif cmd in ['/unban', '/unmute']:
         update_user(uid, {'banned_until': None, 'muted_until': None})
         bot.reply_to(message, f"🕊️ User @{args[1]} telah dilepas dari status Ban/Mute.")
-    
-    elif cmd == '/broadcast' and len(args) >= 2:
-        pesan_broadcast = message.text.replace('/broadcast ', '', 1)
-        res = supabase.table('users').select('user_id').execute()
-        if res.data:
-            berhasil = 0
-            for u in res.data:
-                try:
-                    time.sleep(0.05) 
-                    bot.send_message(u['user_id'], f"📢 <b>PENGUMUMAN ADMIN:</b>\n\n{pesan_broadcast}", parse_mode="HTML")
-                    berhasil += 1
-                except:
-                    pass 
-            bot.reply_to(message, f"✅ Broadcast selesai! Berhasil dikirim ke {berhasil} user.")
 
 # --- INFO & PROFILE ---
 @bot.message_handler(commands=['info', 'profil', 'Profil', 'editprofil', 'EditProfil'])
 def general_commands(message):
-    if is_spamming(message.chat.id): return # CEGAH SPAM!
+    if is_spamming(message.chat.id): return 
     
     user = get_user(message.chat.id)
     if not user: return
@@ -501,7 +504,7 @@ def open_media(call):
 # --- FILTER SPAM & FORWARD PESAN CHAT ---
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'document', 'sticker'])
 def relay_message(message):
-    if is_spamming(message.chat.id): return # SANGAT PENTING: CEGAH SPAM DI CHAT!
+    if is_spamming(message.chat.id): return 
     
     user = get_user(message.chat.id)
     if not user: return
@@ -556,5 +559,19 @@ def relay_message(message):
         warn_msg = "<i>⚠️ Pesan gagal terkirim. Partnermu sepertinya telah menghapus akun atau memblokir bot ini. Obrolan dihentikan secara otomatis.</i>" if lang == "id" else "<i>⚠️ Message failed. Your partner may have blocked the bot. Chat ended.</i>"
         bot.send_message(message.chat.id, warn_msg, parse_mode="HTML")
 
-print("🚀 Micifind Bot V7 Siap Mengudara!")
+# --- GRACEFUL SHUTDOWN (Mencegah Error 409 saat Render Deploy) ---
+def signal_handler(signum, frame):
+    print("Menerima perintah shutdown dari Render. Mematikan koneksi lama...")
+    bot.stop_polling()
+    os._exit(0)
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+try:
+    bot.remove_webhook()
+except:
+    pass
+
+print("🚀 Micifind Bot V8 (Production Final) Siap Mengudara!")
 bot.infinity_polling(timeout=60, long_polling_timeout=30)
