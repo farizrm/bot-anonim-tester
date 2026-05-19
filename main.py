@@ -24,7 +24,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
         <body style="font-family: sans-serif; text-align: center; padding: 20px;">
-            <h1>🚀 Micifind Bot V8 (Production Final + Pro Update) Aktif!</h1>
+            <h1>🚀 Micifind Bot V13 (Production Final + Pro Update) Aktif!</h1>
         </body>
         </html>
         """
@@ -190,14 +190,94 @@ def check_punishment(user):
 def generate_ref_code():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
+# --- LOGIKA PENGECEKAN KEDALUWARSA PRO ---
+def validate_pro_status(user):
+    """Mengecek apakah paket Pro user sudah kedaluwarsa."""
+    if user.get('is_pro') and user.get('pro_until'):
+        # Membaca format waktu ISO dari Supabase
+        # Menghapus timezone info agar bisa dibandingkan dengan utcnow()
+        pro_end_str = user['pro_until'].replace("Z", "").split("+")[0] 
+        pro_end = datetime.fromisoformat(pro_end_str)
+        
+        # Jika waktu saat ini sudah melewati batas kedaluwarsa
+        if datetime.utcnow() > pro_end:
+            # Cabut status pro dan kembalikan ke akun reguler
+            update_user(user['user_id'], {'is_pro': False, 'pref_gender': None})
+            lang = user.get('language', 'en')
+            msg = "<i>⚠️ Langganan Pro kamu telah berakhir. Fitur limit harian diaktifkan kembali.</i>" if lang == 'id' else "<i>⚠️ Your Pro subscription has expired. Daily limits are re-enabled.</i>"
+            bot.send_message(user['user_id'], msg, parse_mode="HTML")
+            return False
+            
+    return user.get('is_pro', False)
+
 # --- LOGIKA DAILY LIMIT (150 MATCH) ---
 def check_daily_limit(user):
-    if user.get('is_pro'): return True 
+    # MEMANGGIL VALIDATE_PRO_STATUS DI SINI
+    if validate_pro_status(user): return True 
     today = datetime.utcnow().date().isoformat()
     if user.get('last_match_date') != today:
         update_user(user['user_id'], {'matches_today': 0, 'last_match_date': today})
         return True
     return user.get('matches_today', 0) < 150
+
+# --- HANDLER PEMBAYARAN TELEGRAM STARS ---
+# 1. Menangani Klik Tombol Pembayaran
+@bot.callback_query_handler(func=lambda call: call.data.startswith('pay_'))
+def send_pro_invoice(call):
+    chat_id = call.message.chat.id
+    plan = call.data.split('_')[1]
+    
+    if plan == '1m':
+        title, desc, payload, amount = "Pro 1 Month", "1 Month Unlimited & Gender Priority", "pro_1m", 35
+    elif plan == '6m':
+        title, desc, payload, amount = "Pro 6 Months", "6 Months Unlimited & Gender Priority", "pro_6m", 185
+    elif plan == '1y':
+        title, desc, payload, amount = "Pro 1 Year", "1 Year Unlimited & Gender Priority", "pro_1y", 335
+    
+    prices = [telebot.types.LabeledPrice(label=title, amount=amount)]
+    
+    # Mengirim Invoice Telegram Stars (Provider token dikosongkan karena menggunakan mata uang XTR/Stars)
+    bot.send_invoice(
+        chat_id=chat_id,
+        title=title,
+        description=desc,
+        invoice_payload=payload,
+        provider_token="", 
+        currency="XTR", 
+        prices=prices
+    )
+
+# 2. Pre-Checkout (Verifikasi awal dari Telegram sebelum saldo ditarik)
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def checkout(pre_checkout_query):
+    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+# 3. Eksekusi Setelah Pembayaran Sukses
+@bot.message_handler(content_types=['successful_payment'])
+def got_payment(message):
+    payload = message.successful_payment.invoice_payload
+    user = get_user(message.chat.id)
+    lang = user.get('language', 'en') if user else 'en'
+    now = datetime.utcnow()
+    
+    # Tentukan tambahan hari sesuai paket
+    if payload == 'pro_1m': days_to_add = 30
+    elif payload == 'pro_6m': days_to_add = 180
+    elif payload == 'pro_1y': days_to_add = 365
+    
+    # Jika user masih Pro, tambahkan waktunya dari sisa hari. Jika tidak, mulai dari hari ini.
+    if user.get('is_pro') and user.get('pro_until'):
+        current_end_str = user['pro_until'].replace("Z", "").split("+")[0]
+        start_date = datetime.fromisoformat(current_end_str)
+        if start_date < now: start_date = now
+    else:
+        start_date = now
+        
+    new_pro_date = (start_date + timedelta(days=days_to_add)).isoformat()
+    update_user(message.chat.id, {'is_pro': True, 'pro_until': new_pro_date})
+    
+    success_msg = f"<i>🎉 Pembayaran sukses! Akunmu sekarang menjadi PRO sampai tanggal {start_date.strftime('%Y-%m-%d')}. Gunakan /pro untuk mengatur preferensi!</i>" if lang == 'id' else f"<i>🎉 Payment successful! You are now PRO until {start_date.strftime('%Y-%m-%d')}. Use /pro to set your preferences!</i>"
+    bot.send_message(message.chat.id, success_msg, parse_mode="HTML")
 
 # --- ALUR REGISTRASI ---
 @bot.message_handler(commands=['start'])
@@ -315,7 +395,7 @@ def process_about(message):
     cool_txt = "<i>✨ Cool! Here's what your profile looks like:</i>" if lang == "en" else "<i>✨ Keren! Ini tampilan profilmu:</i>"
     cmds = "<b>📌 Commands:</b>\n/search - Find a new partner 🔍\n/stop - End the chat 🛑\n/next - Find the next partner ⏭️\n/info - Show all commands ℹ️" if lang == "en" else "<b>📌 Daftar Perintah:</b>\n/search - Cari partner baru 🔍\n/stop - Akhiri obrolan 🛑\n/next - Cari partner selanjutnya ⏭️\n/info - Lihat semua perintah ℹ️"
     
-    profile_text = f"{cool_txt}\n\n⚧️ Gender: {html.escape(data['gender'])}\n🎂 Age: {data['age']}\n🏙️ City: {html.escape(data['location'])}\n📝 About Me: {html.escape(data['about'])}\n\n{cmds}"
+    profile_text = f"{cool_txt}\n\n⚧️ Gender: {html.escape(data['gender'])}\n🎂 Age: {data['age']}\n🗺️ Province: {html.escape(data.get('province', '-'))}\n🏙️ City: {html.escape(data['location'])}\n📝 About Me: {html.escape(data['about'])}\n\n{cmds}"
     bot.send_message(chat_id, profile_text, parse_mode="HTML")
 
 # --- ALUR MATCHMAKING ---
@@ -327,8 +407,8 @@ def attempt_match(chat_id, user_data, scope, value):
     if scope == 'location': query = query.eq('location', value)
     elif scope == 'province': query = query.eq('province', value)
     
-    # LOGIKA PRO PRIORITY GENDER
-    if current_me.get('is_pro') and current_me.get('pref_gender'):
+    # LOGIKA PRO PRIORITY GENDER MEMANGGIL VALIDATE_PRO_STATUS
+    if validate_pro_status(current_me) and current_me.get('pref_gender'):
         query = query.eq('gender', current_me['pref_gender'])
 
     res = query.limit(1).execute()
@@ -336,9 +416,9 @@ def attempt_match(chat_id, user_data, scope, value):
         partner = res.data[0]
         
         # Tambah counter Daily Limit
-        if not current_me.get('is_pro'):
+        if not validate_pro_status(current_me):
             update_user(chat_id, {'matches_today': current_me.get('matches_today', 0) + 1})
-        if not partner.get('is_pro'):
+        if not validate_pro_status(partner):
             update_user(partner['user_id'], {'matches_today': partner.get('matches_today', 0) + 1})
 
         update_user(chat_id, {'status': 'chatting', 'partner_id': partner['user_id']})
@@ -356,7 +436,7 @@ def send_match_info(to_id, partner_data):
     title = "<i>🎉 Partner Found!</i>" if lang == "en" else "<i>🎉 Partner Ditemukan!</i>"
     disc = "<i>⚠️ Disclaimer: Always start conversations politely and never make your partner uncomfortable by discussing 18+ topics!</i>" if lang == "en" else "<i>⚠️ Peringatan: Selalu mulai percakapan dengan sopan dan jangan pernah membuat partnermu tidak nyaman dengan membahas topik 18+!</i>"
     
-    text = f"{title}\n\n⚧️ Gender: {html.escape(partner_data['gender'])}\n🎂 Age: {partner_data['age']}\n🏙️ City: {html.escape(partner_data['location'])}\n📝 About Me: {html.escape(partner_data['about'])}\n\n{disc}\n@micifindbot"
+    text = f"{title}\n\n⚧️ Gender: {html.escape(partner_data['gender'])}\n🎂 Age: {partner_data['age']}\n🗺️ Province: {html.escape(partner_data.get('province', '-'))}\n🏙️ City: {html.escape(partner_data['location'])}\n📝 About Me: {html.escape(partner_data['about'])}\n\n{disc}\n@micifindbot"
     bot.send_message(to_id, text, parse_mode="HTML")
 
 @bot.message_handler(commands=['search', 'next'])
@@ -499,7 +579,7 @@ def show_invite_menu(call):
     bot_username = bot.get_me().username
     invite_link = f"https://t.me/{bot_username}?start={ref_code}"
     
-    text = f"<i>🎁 Invite 10 people for free pro version for 1 weeks.\n\nHere your invite link :\n\n{invite_link}\n\nTotal Invite : {invites}</i>"
+    text = f"<i>🎁 Invite 10 people for free pro version for 1 weeks.\n\nHere your invite link :\n\n{invite_link}\n\nTotal Invite : {invites}/10</i>"
     
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("⬅️ Back", callback_data="back_upsell"))
@@ -616,7 +696,8 @@ def admin_commands(message):
 @bot.message_handler(commands=['pro'])
 def set_pro_pref(message):
     user = get_user(message.chat.id)
-    if user and user.get('is_pro'):
+    # MEMANGGIL VALIDATE_PRO_STATUS DI SINI
+    if user and validate_pro_status(user):
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Match with Male ♂️", callback_data="setpref_Male"), 
                    InlineKeyboardButton("Match with Female ♀️", callback_data="setpref_Female"))
@@ -647,7 +728,9 @@ def general_commands(message):
     
     elif cmd == '/profil':
         title = "<b>👤 Your Profile:</b>" if lang == "en" else "<b>👤 Profil Kamu:</b>"
-        bot.send_message(message.chat.id, f"{title}\n\n⚧️ Gender: {html.escape(user['gender'])}\n🎂 Age: {user['age']}\n🗺️ Province: {html.escape(user.get('province', '-'))}\n🏙️ City: {html.escape(user['location'])}\n📝 About Me: {html.escape(user['about'])}", parse_mode="HTML")
+        # Menambahkan pengecekan PRO di profil
+        status_pro = "⭐ VIP PRO" if validate_pro_status(user) else "Regular"
+        bot.send_message(message.chat.id, f"{title}\n\n🎫 Status: {status_pro}\n⚧️ Gender: {html.escape(user['gender'])}\n🎂 Age: {user['age']}\n🗺️ Province: {html.escape(user.get('province', '-'))}\n🏙️ City: {html.escape(user['location'])}\n📝 About Me: {html.escape(user['about'])}", parse_mode="HTML")
     
     elif cmd == '/editprofil':
         update_user(message.chat.id, {'age': None}) 
@@ -745,5 +828,5 @@ try:
 except:
     pass
 
-print("🚀 Micifind Bot V8 (Production Final + Pro Update) Siap Mengudara!")
+print("🚀 Micifind Bot V13 (Production Final + Pro Update) Siap Mengudara!")
 bot.infinity_polling(timeout=60, long_polling_timeout=30)
